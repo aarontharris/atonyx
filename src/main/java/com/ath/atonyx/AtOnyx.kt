@@ -1,5 +1,6 @@
 package com.ath.atonyx
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -19,6 +20,7 @@ import com.onyx.android.sdk.pen.NeoFountainPen
 import com.onyx.android.sdk.pen.RawInputCallback
 import com.onyx.android.sdk.pen.TouchHelper
 import com.onyx.android.sdk.pen.data.TouchPointList
+import com.onyx.android.sdk.rx.RxManager
 import com.onyx.android.sdk.utils.NumberUtils
 
 open class AtOnyx() {
@@ -44,12 +46,15 @@ open class AtOnyx() {
     private var touchHelper: TouchHelper? = null
     private var startPoint: TouchPoint? = null
 
+    private var rxManager: RxManager? = null
 
     val paint = Paint()
 
     private var stroke = Stroke.FOUNTAIN
 
     val exclusion = mutableListOf<Rect>()
+
+    private var deviceReceiver: GlobalDeviceReceiver? = GlobalDeviceReceiver()
 
     fun setStroke(stroke: Stroke) {
         this.stroke = stroke
@@ -58,6 +63,17 @@ open class AtOnyx() {
 
     fun addExclusion(rect: Rect) {
         exclusion.add(rect)
+    }
+
+    open fun getRxManager(): RxManager? {
+        if (rxManager == null) {
+            rxManager = RxManager.Builder.sharedSingleThreadManager()
+        }
+        return rxManager
+    }
+
+    open fun renderToScreen(surfaceView: SurfaceView?, bitmap: Bitmap?) {
+        getRxManager()!!.enqueue(RendererToScreenRequest(surfaceView, bitmap), null)
     }
 
     fun attainBitmap(): Bitmap = this.bitmap ?: newBitmap().also { this.bitmap = it }
@@ -79,6 +95,14 @@ open class AtOnyx() {
         paint.strokeWidth = STROKE_WIDTH
     }
 
+    fun initReceiver() {
+        deviceReceiver?.setSystemNotificationPanelChangeListener { open ->
+            setRawDrawing(!open)
+            renderToScreen(surfaceview, attainBitmap())
+        }?.setSystemScreenOnListener { renderToScreen(surfaceview, attainBitmap()) }
+        deviceReceiver?.enable(getContext(), true)
+    }
+
     fun cleanSurfaceView(): Boolean {
         if (surfaceview.getHolder() == null) {
             return false
@@ -91,12 +115,23 @@ open class AtOnyx() {
     }
 
     fun clearSurface() {
-        clearBitmap()
+        recycleBitmap()
     }
 
-    fun clearBitmap() {
+    fun recycleBitmap() {
         bitmap?.recycle()
         bitmap = null
+    }
+
+    fun eraseEverything() {
+        setRawDrawing(false)
+        recycleBitmap()
+        cleanSurfaceView()
+    }
+
+    fun enablePen() {
+        setRawDrawing(true)
+        recycleBitmap()
     }
 
     fun setRawDrawing(enabled: Boolean) {
@@ -118,6 +153,12 @@ open class AtOnyx() {
         onCreate(surfaceView)
 
         initSurface()
+
+        initReceiver()
+    }
+
+    protected fun getContext(): Context {
+        return surfaceview.context
     }
 
     /**
@@ -141,9 +182,11 @@ open class AtOnyx() {
     protected open fun onDestroy() {
         touchHelper?.closeRawDrawing()
         _surfaceview = null
-        clearBitmap()
+        recycleBitmap()
         canvas = null
         touchHelper = null
+        deviceReceiver?.enable(getContext(), false)
+        deviceReceiver = null
     }
 
 
@@ -296,4 +339,27 @@ open class AtOnyx() {
         )
     }
 
+    /*
+    private void drawBitmapToSurface() {
+        if (!binding.cbRender.isChecked()) {
+            return;
+        }
+        if (bitmap == null) {
+            return;
+        }
+        Canvas lockCanvas = binding.surfaceview.getHolder().lockCanvas();
+        if (lockCanvas == null) {
+            return;
+        }
+        lockCanvas.drawColor(Color.WHITE);
+        lockCanvas.drawBitmap(bitmap, 0f, 0f, paint);
+        binding.surfaceview.getHolder().unlockCanvasAndPost(lockCanvas);
+        // refresh ui
+        touchHelper.setRawDrawingEnabled(false);
+        touchHelper.setRawDrawingEnabled(true);
+        if (!binding.cbRender.isChecked()) {
+            touchHelper.setRawDrawingRenderEnabled(false);
+        }
+    }
+     */
 }
