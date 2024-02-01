@@ -70,7 +70,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
     private val attr = StrokeAttr()
 
     private var inResume = false
-    private var isLayoutValid = false
+    private var isSurfaceValid = false
 
     private var _surfaceview: SurfaceView? = null
     protected val surfaceview: SurfaceView get() = _surfaceview!! // non-null or fail as it is required in onCreate()
@@ -233,10 +233,11 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
     }
 
     fun checkResumeAndLayoutComplete() {
-        if (inResume && isLayoutValid) onResumeAndLayoutComplete()
+        if (inResume && isSurfaceValid) onResumeAndLayoutComplete()
     }
 
     fun onResumeAndLayoutComplete() {
+        enablePen()
     }
 
     override fun doPause() {
@@ -257,7 +258,6 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
     override fun doCreate(surfaceView: SurfaceView) {
         Log.d("AtOnyx.doCreate() - Start")
         this._surfaceview = surfaceView
-        // touchHelper = TouchHelper.create(surfaceView, callback)
         initReceiver()
         initStyle()
         initSurface()
@@ -267,56 +267,33 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
     }
 
     private fun initSurface() {
-        surfaceview.addOnLayoutChangeListener(object : OnLayoutChangeListener {
-            override fun onLayoutChange(
-                v: View,
-                left: Int,
-                top: Int,
-                right: Int,
-                bottom: Int,
-                oldLeft: Int,
-                oldTop: Int,
-                oldRight: Int,
-                oldBottom: Int,
-            ) {
-                Log.d("AtOnyx.onLayoutChange -- surfaceview.wh=${surfaceview.width}/${surfaceview.height}")
-                if (cleanSurfaceView()) {
-                    surfaceview.removeOnLayoutChangeListener(this)
-                }
-                val limit = Rect()
-                surfaceview.getLocalVisibleRect(limit)
-                touchHelper
-                    .setLimitRect(limit, exclusion)
-                    .openRawDrawing()
-                initStyle()
-                isLayoutValid = true
-                checkResumeAndLayoutComplete()
-            }
-        })
-
-        surfaceview.setOnTouchListener { _, event ->
-            Log.d("surfaceView.setOnTouchListener - onTouch::action - " + event.action)
-            true
+        @Suppress("UNUSED_ANONYMOUS_PARAMETER")
+        surfaceview.addOnLayoutChangeListener { v, l, t, r, b, oldL, oldT, oldR, oldB ->
+            Log.d("AtOnyx.onLayoutChange -- surfaceview.wh=${surfaceview.width}/${surfaceview.height}")
+            cleanSurfaceView()
+            val limit = Rect()
+            surfaceview.getLocalVisibleRect(limit)
+            touchHelper.setLimitRect(limit, exclusion)
+            if (!touchHelper.isRawDrawingCreated)
+                touchHelper.openRawDrawing()
+            initStyle()
+            isSurfaceValid = true
+            checkResumeAndLayoutComplete()
         }
 
-        val surfaceCallback: SurfaceHolder.Callback = object : SurfaceHolder.Callback {
+        // surfaceview.setOnTouchListener { _, event ->
+        //    Log.d("surfaceView.setOnTouchListener - onTouch::action - " + event.action)
+        //    true
+        // }
+
+        surfaceview.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 cleanSurfaceView()
             }
 
-            override fun surfaceChanged(
-                holder: SurfaceHolder,
-                format: Int,
-                width: Int,
-                height: Int,
-            ) {
-            }
-
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-                holder.removeCallback(this)
-            }
-        }
-        surfaceview.holder.addCallback(surfaceCallback)
+            override fun surfaceChanged(holder: SurfaceHolder, fmt: Int, w: Int, h: Int) {}
+            override fun surfaceDestroyed(holder: SurfaceHolder) = holder.removeCallback(this)
+        })
     }
 
     protected open fun getContext(): Context {
