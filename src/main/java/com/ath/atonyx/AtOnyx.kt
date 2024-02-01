@@ -31,12 +31,13 @@ interface AtOnyx {
         }
     }
 
-    fun setStroke(stroke: StrokeStyle)
-    fun addExclusion(rect: Rect)
+    fun style(): AtOnyxStyle
 
+    fun addExclusion(rect: Rect)
     fun eraseEverything()
 
     fun enablePen()
+    fun enableErase()
 
     fun doCreate(surfaceView: SurfaceView)
     fun doResume()
@@ -46,19 +47,30 @@ interface AtOnyx {
 
     fun draw(stroke: StrokeStyle, touchPointList: TouchPointList)
 
+    fun save(name: String)
+    fun restore(name: String)
+    fun refreshAll()
 }
 
-open class AtOnyxImpl : AtOnyx {
+interface AtOnyxStyle {
+    fun setStroke(stroke: StrokeStyle)
+}
+
+open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
 
     private var strokeStyle = StrokeStyle.FOUNTAIN
     private var strokeWidth = 4.0f
     private var countRec = 0
+    private var isEraser = false
+
+    private var inResume = false
+    private var isLayoutValid = false
 
     private var _surfaceview: SurfaceView? = null
     protected val surfaceview: SurfaceView get() = _surfaceview!! // non-null or fail as it is required in onCreate()
 
-    private var bitmap: Bitmap? = null
-    private var canvas: Canvas? = null
+    private var _bitmap: Bitmap? = null
+    private var _canvas: Canvas? = null
 
     private var _touchHelper: TouchHelper? = null
     private val touchHelper: TouchHelper
@@ -77,6 +89,8 @@ open class AtOnyxImpl : AtOnyx {
         touchHelper.setStrokeStyle(stroke.style)
     }
 
+    override fun style(): AtOnyxStyle = this
+
     override fun addExclusion(rect: Rect) {
         exclusion.add(rect)
     }
@@ -92,9 +106,9 @@ open class AtOnyxImpl : AtOnyx {
         getRxManager()!!.enqueue(RendererToScreenRequest(surfaceView, bitmap), null)
     }
 
-    private fun attainBitmap(): Bitmap = this.bitmap ?: newBitmap().also { this.bitmap = it }
+    private fun attainBitmap(): Bitmap = this._bitmap ?: newBitmap().also { this._bitmap = it }
     private fun attainCanvas(): Canvas =
-        (this.canvas ?: newCanvas(attainBitmap())).also { it.setBitmap(attainBitmap()) }
+        (this._canvas ?: newCanvas(attainBitmap())).also { it.setBitmap(attainBitmap()) }
 
     protected open fun newBitmap(): Bitmap = Bitmap.createBitmap(
         surfaceview.width,
@@ -125,19 +139,49 @@ open class AtOnyxImpl : AtOnyx {
         }
         val canvas: Canvas = surfaceview.holder.lockCanvas() ?: return false
         canvas.drawColor(Color.WHITE)
-
         surfaceview.holder.unlockCanvasAndPost(canvas)
         return true
     }
 
-    public fun clearSurface() {
-        recycleBitmap()
-    }
-
     private fun recycleBitmap() {
         Log.d("AtOnyx.recycleBitmap")
-        bitmap?.recycle()
-        bitmap = null
+        _canvas = null
+        _bitmap?.recycle()
+        _bitmap = null
+    }
+
+    override fun refreshAll() {
+        Log.d("AtOnyx.refreshAll")
+        setRawDrawing(false)
+
+        if (surfaceview.holder == null) return
+
+        val surfaceCanvas: Canvas = surfaceview.holder.lockCanvas() ?: return
+        Log.d("AtOnyx.refreshAll -- got surfaceCanvas")
+        surfaceCanvas.drawColor(Color.WHITE) // overwrite the whole surfaceCanvas with WHITE
+
+        val copy = ArrayList(penStrokesOrdered)
+        penStrokesOrdered.clear()
+
+        for (stroke in copy) {
+            val points = stroke.toTouchPointList()
+            Log.d("AtOnyx.refreshAll -- points=${points.size}")
+            val canvas = surfaceCanvas // attainCanvas()
+            val path = Path()
+            val prePoint = PointF(points[0].x, points[0].y)
+            path.moveTo(prePoint.x, prePoint.y)
+            for (point in points) {
+                path.quadTo(prePoint.x, prePoint.y, point.x, point.y)
+                prePoint.x = point.x
+                prePoint.y = point.y
+            }
+            canvas.drawPath(path, paint)
+
+            penStrokesOrdered.add(stroke)
+        }
+
+        surfaceview.holder.unlockCanvasAndPost(surfaceCanvas)
+        setRawDrawing(true)
     }
 
     override fun eraseEverything() {
@@ -148,9 +192,14 @@ open class AtOnyxImpl : AtOnyx {
     }
 
     override fun enablePen() {
+        isEraser = false
         Log.d("AtOnyx.enablePen")
         setRawDrawing(true)
-        recycleBitmap()
+        // recycleBitmap()
+    }
+
+    override fun enableErase() {
+        isEraser = true
     }
 
     private fun setRawDrawing(enabled: Boolean) {
@@ -161,11 +210,43 @@ open class AtOnyxImpl : AtOnyx {
     override fun doResume() {
         Log.d("AtOnyx.doResume")
         setRawDrawing(true)
+        inResume = true
+        checkResumeAndLayoutComplete()
+    }
+
+    fun checkResumeAndLayoutComplete() {
+        if (inResume && isLayoutValid) onResumeAndLayoutComplete()
+    }
+
+    fun onResumeAndLayoutComplete() {
+        startExperiment()
+    }
+
+    fun startExperiment() {
+        Log.d("AtOnyx.startExperiment")
+        Log.d("AtOnyx.startExperiment -- surfaceview=$_surfaceview")
+        Log.d("AtOnyx.startExperiment -- surfaceview.wh=${_surfaceview?.width}/${_surfaceview?.height}")
+        enablePen()
+        val bitmap = newBitmap()
+        val canvas = newCanvas(bitmap)
+        val path = Path()
+
+        paint.color = Color.BLACK
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = strokeWidth
+
+        path.moveTo(550f, 400f)
+        path.lineTo(750f, 400f)
+        canvas.drawPath(path, paint)
+
+        drawBitmapToSurface(bitmap)
     }
 
     override fun doPause() {
         Log.d("AtOnyx.doPause")
         setRawDrawing(false)
+        inResume = false
     }
 
     override fun doStop() {
@@ -181,9 +262,9 @@ open class AtOnyxImpl : AtOnyx {
         Log.d("AtOnyx.doCreate() - Start")
         this._surfaceview = surfaceView
         // touchHelper = TouchHelper.create(surfaceView, callback)
+        initReceiver()
         initPaint()
         initSurface()
-        initReceiver()
         setRawDrawing(true)
         onCreate(surfaceView)
         Log.d("AtOnyx.doCreate() - Finish")
@@ -202,6 +283,7 @@ open class AtOnyxImpl : AtOnyx {
                 oldRight: Int,
                 oldBottom: Int,
             ) {
+                Log.d("AtOnyx.onLayoutChange -- surfaceview.wh=${surfaceview.width}/${surfaceview.height}")
                 if (cleanSurfaceView()) {
                     surfaceview.removeOnLayoutChangeListener(this)
                 }
@@ -211,7 +293,8 @@ open class AtOnyxImpl : AtOnyx {
                     ?.setLimitRect(limit, exclusion)
                     ?.openRawDrawing()
                 touchHelper.setStrokeStyle(strokeStyle.style)
-                surfaceview.addOnLayoutChangeListener(this)
+                isLayoutValid = true
+                checkResumeAndLayoutComplete()
             }
         })
 
@@ -266,7 +349,7 @@ open class AtOnyxImpl : AtOnyx {
         touchHelper.closeRawDrawing()
         _surfaceview = null
         recycleBitmap()
-        canvas = null
+        _canvas = null
         _touchHelper = null
         deviceReceiver?.enable(getContext(), false)
         deviceReceiver = null
@@ -276,6 +359,9 @@ open class AtOnyxImpl : AtOnyx {
     private val callback: RawInputCallback = object : RawInputCallback() {
         override fun onBeginRawDrawing(b: Boolean, touchPoint: TouchPoint) {
             Log.d("onBeginRawDrawing")
+
+            currentPenStroke = PenStrokeImpl(strokeStyle).also { penStrokesOrdered.add(it) }
+
             startPoint = touchPoint
             Log.d(touchPoint.getX().toString() + ", " + touchPoint.getY())
             countRec = 0
@@ -286,6 +372,8 @@ open class AtOnyxImpl : AtOnyx {
             Log.d("onEndRawDrawing###")
             Log.d(touchPoint.getX().toString() + ", " + touchPoint.getY())
             TouchUtils.enableFingerTouch(surfaceview.context)
+            currentPenStroke = null
+
         }
 
         override fun onRawDrawingTouchPointMoveReceived(touchPoint: TouchPoint) {
@@ -296,7 +384,8 @@ open class AtOnyxImpl : AtOnyx {
         }
 
         override fun onRawDrawingTouchPointListReceived(touchPointList: TouchPointList) {
-            Log.d("onRawDrawingTouchPointListReceived")
+            Log.d("AtOnyx.onTouchPoints -- points=${touchPointList.size()}")
+            currentPenStroke?.add(touchPointList)
             draw(strokeStyle, touchPointList)
         }
 
@@ -317,22 +406,49 @@ open class AtOnyxImpl : AtOnyx {
         }
     }
 
-
     override fun draw(stroke: StrokeStyle, touchPointList: TouchPointList) {
+        draw(stroke, touchPointList.points)
+    }
+
+    private var currentPenStroke: PenStroke? = PenStrokeImpl(strokeStyle)
+
+    fun draw(stroke: StrokeStyle, points: List<TouchPoint>) {
+        if (points.isEmpty()) return
         when (stroke) {
-            StrokeStyle.PENCIL -> drawPencil(touchPointList)
-            StrokeStyle.FOUNTAIN -> drawFountain(touchPointList)
-            else -> drawFountain(touchPointList)
+            StrokeStyle.PENCIL -> drawPencil(points)
+            StrokeStyle.FOUNTAIN -> drawFountain(points)
+            else -> drawFountain(points)
         }
     }
 
-    protected open fun drawPencil(touchPointList: TouchPointList) {
+    // NOTE: It is unclear if touchpoints are pooled. So we should not keep refs to them.
+    //       TouchPointList.detachPointList() could be a hint that pooling considered
+    //       However, TouchPoint looks ok? Still unsure. TODO: Test to find out?
+    //       In the name of performance we will risk it and fix if it becomes a problem later.
+    private val penStrokesOrdered = ArrayList<PenStroke>()
+
+    override fun save(name: String) {
+        TODO("Not yet implemented")
+    }
+
+    override fun restore(name: String) {
+        Log.d("AtOnyx.restore $name")
+        val copy = ArrayList(penStrokesOrdered)
+        penStrokesOrdered.clear()
+        for (stroke in copy) {
+            Log.d("AtOnyx.restore $name -- points=${stroke.toTouchPointList().size}")
+            drawPencil(stroke.toTouchPointList())
+            penStrokesOrdered.add(stroke)
+        }
+    }
+
+    protected open fun drawPencil(points: List<TouchPoint>) {
+        Log.d("AtOnyx.drawPencil -- points=${points.size}")
         val canvas = attainCanvas()
-        val list = touchPointList.points
         val path = Path()
-        val prePoint = PointF(list.get(0).x, list.get(0).y)
+        val prePoint = PointF(points[0].x, points[0].y)
         path.moveTo(prePoint.x, prePoint.y)
-        for (point in list) {
+        for (point in points) {
             path.quadTo(prePoint.x, prePoint.y, point.x, point.y)
             prePoint.x = point.x
             prePoint.y = point.y
@@ -340,18 +456,39 @@ open class AtOnyxImpl : AtOnyx {
         canvas.drawPath(path, paint)
     }
 
-    protected open fun drawFountain(touchPointList: TouchPointList) {
+    protected open fun drawFountain(points: List<TouchPoint>) {
+        Log.d("AtOnyx.drawFountain -- points=${points.size}")
         val canvas = attainCanvas()
         val maxPressure = EpdController.getMaxTouchPressure()
         NeoFountainPen.drawStroke(
             canvas,
             paint,
-            touchPointList.points,
+            points,
             NumberUtils.FLOAT_ONE,
             strokeWidth,
             maxPressure,
-            false
+            isEraser
         )
+    }
+
+    private fun drawBitmapToSurface(bitmap: Bitmap) {
+        Log.d("AtOnyx.drawBitmap")
+        val lockCanvas = surfaceview.holder.lockCanvas().also {
+            if (it == null) Log.d("AtOnyx.drawBitmap -- could not obtain lockCanvas")
+        } ?: return
+
+        // lockCanvas.drawColor(Color.BLACK); // This overwrites the whole canvas with this color
+        Log.d("AtOnyx.drawBitmap to canvas")
+        lockCanvas.drawBitmap(bitmap, 0f, 0f, paint);
+        surfaceview.holder.unlockCanvasAndPost(lockCanvas);
+
+        // refresh ui
+        touchHelper.setRawDrawingEnabled(false)
+        touchHelper.setRawDrawingEnabled(true)
+
+//        if (!binding.cbRender.isChecked()) {
+//            touchHelper.setRawDrawingRenderEnabled(false);
+//        }
     }
 
     /*
