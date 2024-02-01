@@ -177,39 +177,24 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
 
     override fun refreshAll() {
         Log.d("AtOnyx.refreshAll")
+        if (surfaceview.holder == null) {
+            Log.e("AtOnyx.refreshAll -- Unable to obtain surfaceview.holder")
+            return
+        }
+
         setRawDrawing(false)
 
-        if (surfaceview.holder == null) return
+        val surfaceCanvas: Canvas = surfaceview.holder.lockCanvas().also {
+            if (it == null) Log.e("AtOnyx.refreshAll -- Unable to obtain surfaceview.lockCanvas")
+        } ?: return
 
-        val surfaceCanvas: Canvas = surfaceview.holder.lockCanvas() ?: return
-        Log.d("AtOnyx.refreshAll -- got surfaceCanvas")
         surfaceCanvas.drawColor(Color.WHITE) // overwrite the whole surfaceCanvas with WHITE
-
 
         val copy = ArrayList(penStrokesOrdered)
         penStrokesOrdered.clear()
 
         for (stroke in copy) {
-            val points = stroke.toTouchPointList()
-            Log.d("AtOnyx.refreshAll -- points=${points.size}")
-
             draw(surfaceCanvas, stroke)
-
-            /*
-            val canvas = surfaceCanvas // attainCanvas()
-            val path = Path()
-            val prePoint = PointF(points[0].x, points[0].y)
-            path.moveTo(prePoint.x, prePoint.y)
-            for (point in points) {
-                path.quadTo(prePoint.x, prePoint.y, point.x, point.y)
-                prePoint.x = point.x
-                prePoint.y = point.y
-            }
-            canvas.drawPath(path, paint)
-             */
-
-            // drawFountain(surfaceCanvas, points)
-
             penStrokesOrdered.add(stroke)
         }
 
@@ -461,7 +446,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
      * @param canvas - You can draw to a bitmap-backed canvas, or the surface.canvas
      */
     protected open fun drawPencil(canvas: Canvas, points: List<TouchPoint>) {
-        Log.d("AtOnyx.drawPencil -- points=${points.size}")
+        // Log.d("AtOnyx.drawPencil -- points=${points.size}")
         val path = Path()
         val prePoint = PointF(points[0].x, points[0].y)
         path.moveTo(prePoint.x, prePoint.y)
@@ -477,7 +462,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
      * @param canvas - You can draw to a bitmap-backed canvas, or the surface.canvas
      */
     protected open fun drawFountain(canvas: Canvas, points: List<TouchPoint>) {
-        Log.d("AtOnyx.drawFountain -- points=${points.size}")
+        // Log.d("AtOnyx.drawFountain -- points=${points.size}")
         val maxPressure = EpdController.getMaxTouchPressure()
         val eraser = false // attr.mode == PenMode.ERASE_STROKE
         NeoFountainPen.drawStroke(
