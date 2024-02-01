@@ -4,7 +4,7 @@ import com.onyx.android.sdk.data.note.TouchPoint
 import com.onyx.android.sdk.pen.data.TouchPointList
 
 interface PenStroke {
-    val style: StrokeStyle
+    val attr: StrokeAttr
     fun toTouchPointList(): List<TouchPoint>
     fun add(touchPointList: TouchPointList)
     fun add(points: List<TouchPoint>)
@@ -16,7 +16,7 @@ interface PenStroke {
  * By keeping a ref, we could be causing leaks or other data errors.
  */
 internal class PenStrokeImpl(
-    override val style: StrokeStyle,
+    override val attr: StrokeAttr,
     points: List<TouchPoint>? = null,
 ) : PenStroke {
     private val touchPointList = TouchPointList()

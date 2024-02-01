@@ -12,6 +12,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.View.OnLayoutChangeListener
+import androidx.annotation.ColorInt
 import com.ath.atonyx.TouchUtils.disableFingerTouch
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
@@ -45,7 +46,7 @@ interface AtOnyx {
     fun doStop()
     fun doDestroy()
 
-    fun draw(stroke: StrokeStyle, touchPointList: TouchPointList)
+    fun draw(touchPointList: TouchPointList)
 
     fun save(name: String)
     fun restore(name: String)
@@ -53,15 +54,20 @@ interface AtOnyx {
 }
 
 interface AtOnyxStyle {
-    fun setStroke(stroke: StrokeStyle)
+    fun setMode(mode: PenMode)
+    fun setStyle(style: StrokeStyle)
+    fun setWidth(width: Float)
+    fun setColor(@ColorInt color: Int)
+    fun setColor(color: Color) = setColor(color.toArgb())
 }
 
+/**
+ * # Onyx Boox Note 3
+ * Screen Resolution: 1872 x 1404, PPI 227
+ */
 open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
 
-    private var strokeStyle = StrokeStyle.FOUNTAIN
-    private var strokeWidth = 4.0f
-    private var countRec = 0
-    private var isEraser = false
+    private val attr = StrokeAttr()
 
     private var inResume = false
     private var isLayoutValid = false
@@ -84,9 +90,35 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
 
     private var deviceReceiver: GlobalDeviceReceiver? = GlobalDeviceReceiver()
 
-    override fun setStroke(stroke: StrokeStyle) {
-        this.strokeStyle = stroke
-        touchHelper.setStrokeStyle(stroke.style)
+    override fun setMode(mode: PenMode) {
+        this.attr.mode = mode
+        initStyle()
+    }
+
+    override fun setStyle(stroke: StrokeStyle) {
+        this.attr.style = stroke
+        initStyle()
+    }
+
+    override fun setWidth(width: Float) {
+        this.attr.width = width
+        initStyle()
+    }
+
+    override fun setColor(color: Int) {
+        this.attr.color = color
+        initStyle()
+    }
+
+    fun initStyle() {
+        paint.isAntiAlias = true
+        paint.style = Paint.Style.STROKE
+        paint.color = this.attr.color
+        paint.strokeWidth = this.attr.width
+
+        touchHelper.setStrokeStyle(attr.style.style)
+        touchHelper.setStrokeWidth(attr.width)
+        touchHelper.setStrokeColor(attr.color)
     }
 
     override fun style(): AtOnyxStyle = this
@@ -117,13 +149,6 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
     )
 
     protected open fun newCanvas(bitmap: Bitmap): Canvas = Canvas(bitmap)
-
-    protected open fun initPaint() {
-        paint.isAntiAlias = true
-        paint.style = Paint.Style.STROKE
-        paint.color = Color.BLACK
-        paint.strokeWidth = strokeWidth
-    }
 
     private fun initReceiver() {
         deviceReceiver?.setSystemNotificationPanelChangeListener { open ->
@@ -160,12 +185,17 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
         Log.d("AtOnyx.refreshAll -- got surfaceCanvas")
         surfaceCanvas.drawColor(Color.WHITE) // overwrite the whole surfaceCanvas with WHITE
 
+
         val copy = ArrayList(penStrokesOrdered)
         penStrokesOrdered.clear()
 
         for (stroke in copy) {
             val points = stroke.toTouchPointList()
             Log.d("AtOnyx.refreshAll -- points=${points.size}")
+
+            draw(surfaceCanvas, stroke)
+
+            /*
             val canvas = surfaceCanvas // attainCanvas()
             val path = Path()
             val prePoint = PointF(points[0].x, points[0].y)
@@ -176,6 +206,9 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
                 prePoint.y = point.y
             }
             canvas.drawPath(path, paint)
+             */
+
+            // drawFountain(surfaceCanvas, points)
 
             penStrokesOrdered.add(stroke)
         }
@@ -192,14 +225,14 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
     }
 
     override fun enablePen() {
-        isEraser = false
+        setMode(PenMode.PEN)
         Log.d("AtOnyx.enablePen")
         setRawDrawing(true)
         // recycleBitmap()
     }
 
     override fun enableErase() {
-        isEraser = true
+        setMode(PenMode.ERASE_STROKE)
     }
 
     private fun setRawDrawing(enabled: Boolean) {
@@ -219,28 +252,6 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
     }
 
     fun onResumeAndLayoutComplete() {
-        startExperiment()
-    }
-
-    fun startExperiment() {
-        Log.d("AtOnyx.startExperiment")
-        Log.d("AtOnyx.startExperiment -- surfaceview=$_surfaceview")
-        Log.d("AtOnyx.startExperiment -- surfaceview.wh=${_surfaceview?.width}/${_surfaceview?.height}")
-        enablePen()
-        val bitmap = newBitmap()
-        val canvas = newCanvas(bitmap)
-        val path = Path()
-
-        paint.color = Color.BLACK
-        paint.isAntiAlias = true
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = strokeWidth
-
-        path.moveTo(550f, 400f)
-        path.lineTo(750f, 400f)
-        canvas.drawPath(path, paint)
-
-        drawBitmapToSurface(bitmap)
     }
 
     override fun doPause() {
@@ -263,7 +274,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
         this._surfaceview = surfaceView
         // touchHelper = TouchHelper.create(surfaceView, callback)
         initReceiver()
-        initPaint()
+        initStyle()
         initSurface()
         setRawDrawing(true)
         onCreate(surfaceView)
@@ -289,10 +300,10 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
                 }
                 val limit = Rect()
                 surfaceview.getLocalVisibleRect(limit)
-                touchHelper.setStrokeWidth(strokeWidth)
-                    ?.setLimitRect(limit, exclusion)
-                    ?.openRawDrawing()
-                touchHelper.setStrokeStyle(strokeStyle.style)
+                touchHelper
+                    .setLimitRect(limit, exclusion)
+                    .openRawDrawing()
+                initStyle()
                 isLayoutValid = true
                 checkResumeAndLayoutComplete()
             }
@@ -359,12 +370,9 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
     private val callback: RawInputCallback = object : RawInputCallback() {
         override fun onBeginRawDrawing(b: Boolean, touchPoint: TouchPoint) {
             Log.d("onBeginRawDrawing")
-
-            currentPenStroke = PenStrokeImpl(strokeStyle).also { penStrokesOrdered.add(it) }
-
+            currentPenStroke = PenStrokeImpl(StrokeAttr(attr)).also { penStrokesOrdered.add(it) }
             startPoint = touchPoint
             Log.d(touchPoint.getX().toString() + ", " + touchPoint.getY())
-            countRec = 0
             disableFingerTouch(getContext())
         }
 
@@ -379,14 +387,12 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
         override fun onRawDrawingTouchPointMoveReceived(touchPoint: TouchPoint) {
             Log.d("onRawDrawingTouchPointMoveReceived")
             Log.d(touchPoint.getX().toString() + ", " + touchPoint.getY())
-            countRec++
-            Log.d("countRec = $countRec")
         }
 
         override fun onRawDrawingTouchPointListReceived(touchPointList: TouchPointList) {
             Log.d("AtOnyx.onTouchPoints -- points=${touchPointList.size()}")
             currentPenStroke?.add(touchPointList)
-            draw(strokeStyle, touchPointList)
+            draw(touchPointList)
         }
 
         override fun onBeginRawErasing(b: Boolean, touchPoint: TouchPoint) {
@@ -406,20 +412,24 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
         }
     }
 
-    override fun draw(stroke: StrokeStyle, touchPointList: TouchPointList) {
-        draw(stroke, touchPointList.points)
+    override fun draw(touchPointList: TouchPointList) {
+        draw(attainCanvas(), this.attr, touchPointList.points)
     }
 
-    private var currentPenStroke: PenStroke? = PenStrokeImpl(strokeStyle)
+    fun draw(surfaceCanvas: Canvas, penStroke: PenStroke) =
+        draw(surfaceCanvas, penStroke.attr, penStroke.toTouchPointList())
 
-    fun draw(stroke: StrokeStyle, points: List<TouchPoint>) {
+    private var currentPenStroke: PenStroke? = PenStrokeImpl(attr)
+
+    fun draw(canvas: Canvas, attr: StrokeAttr, points: List<TouchPoint>) {
         if (points.isEmpty()) return
-        when (stroke) {
-            StrokeStyle.PENCIL -> drawPencil(points)
-            StrokeStyle.FOUNTAIN -> drawFountain(points)
-            else -> drawFountain(points)
+        when (attr.style) {
+            StrokeStyle.PENCIL -> drawPencil(canvas, points)
+            StrokeStyle.FOUNTAIN -> drawFountain(canvas, points)
+            else -> drawFountain(canvas, points)
         }
     }
+
 
     // NOTE: It is unclear if touchpoints are pooled. So we should not keep refs to them.
     //       TouchPointList.detachPointList() could be a hint that pooling considered
@@ -437,14 +447,21 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
         penStrokesOrdered.clear()
         for (stroke in copy) {
             Log.d("AtOnyx.restore $name -- points=${stroke.toTouchPointList().size}")
-            drawPencil(stroke.toTouchPointList())
+            // drawPencil(stroke.toTouchPointList())
             penStrokesOrdered.add(stroke)
         }
     }
 
-    protected open fun drawPencil(points: List<TouchPoint>) {
+    /**
+     * Q: Which Canvas do I use?
+     * The Onyx renderer wants us to provide a bitmap. So when drawing directly to the screen
+     * we must use a canvas that is backed by the same bitmap we pass to the Onyx Renderer.
+     * However, when you are writing to the surfaceview directly (such as restoring history)
+     * you would want to obtain the surfaceview.canvas
+     * @param canvas - You can draw to a bitmap-backed canvas, or the surface.canvas
+     */
+    protected open fun drawPencil(canvas: Canvas, points: List<TouchPoint>) {
         Log.d("AtOnyx.drawPencil -- points=${points.size}")
-        val canvas = attainCanvas()
         val path = Path()
         val prePoint = PointF(points[0].x, points[0].y)
         path.moveTo(prePoint.x, prePoint.y)
@@ -456,18 +473,21 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle {
         canvas.drawPath(path, paint)
     }
 
-    protected open fun drawFountain(points: List<TouchPoint>) {
+    /**
+     * @param canvas - You can draw to a bitmap-backed canvas, or the surface.canvas
+     */
+    protected open fun drawFountain(canvas: Canvas, points: List<TouchPoint>) {
         Log.d("AtOnyx.drawFountain -- points=${points.size}")
-        val canvas = attainCanvas()
         val maxPressure = EpdController.getMaxTouchPressure()
+        val eraser = false // attr.mode == PenMode.ERASE_STROKE
         NeoFountainPen.drawStroke(
             canvas,
             paint,
             points,
             NumberUtils.FLOAT_ONE,
-            strokeWidth,
+            attr.width,
             maxPressure,
-            isEraser
+            eraser
         )
     }
 
