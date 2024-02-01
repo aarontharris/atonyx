@@ -5,6 +5,9 @@ import android.graphics.Rect
 import android.view.View
 import com.onyx.android.sdk.api.device.epd.EpdController
 
+/**
+ * Credit to github.com/onyx-intl/OnyxAndroidDemo
+ */
 object TouchUtils {
     @JvmStatic
     fun disableFingerTouch(context: Context) {

@@ -6,6 +6,10 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.view.SurfaceView;
 
+
+/**
+ * Credit to github.com/onyx-intl/OnyxAndroidDemo
+ */
 public class RendererUtils {
 
     public static void renderBackground(Canvas canvas,

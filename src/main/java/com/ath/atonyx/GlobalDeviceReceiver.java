@@ -9,6 +9,9 @@ import com.onyx.android.sdk.utils.BroadcastHelper;
 import com.onyx.android.sdk.utils.DeviceReceiver;
 import com.onyx.android.sdk.utils.StringUtils;
 
+/**
+ * Credit to github.com/onyx-intl/OnyxAndroidDemo
+ */
 public class GlobalDeviceReceiver extends BroadcastReceiver {
 
     public static final String SYSTEM_UI_DIALOG_OPEN_ACTION = DeviceReceiver.SYSTEM_UI_DIALOG_OPEN_ACTION;

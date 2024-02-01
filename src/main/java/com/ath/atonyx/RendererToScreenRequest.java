@@ -9,6 +9,9 @@ import com.onyx.android.sdk.api.device.epd.EpdController;
 import com.onyx.android.sdk.api.device.epd.UpdateMode;
 import com.onyx.android.sdk.rx.RxRequest;
 
+/**
+ * Credit to github.com/onyx-intl/OnyxAndroidDemo
+ */
 public class RendererToScreenRequest extends RxRequest {
     private SurfaceView surfaceView;
     private Bitmap bitmap;
