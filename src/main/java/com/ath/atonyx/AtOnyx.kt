@@ -8,12 +8,11 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.Rect
-import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.View.OnLayoutChangeListener
-import android.view.View.OnTouchListener
+import com.ath.atonyx.TouchUtils.disableFingerTouch
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
 import com.onyx.android.sdk.pen.NeoFountainPen
@@ -23,19 +22,37 @@ import com.onyx.android.sdk.pen.data.TouchPointList
 import com.onyx.android.sdk.rx.RxManager
 import com.onyx.android.sdk.utils.NumberUtils
 
-open class AtOnyx() {
-
+interface AtOnyx {
     companion object {
-        const val TAG = "AtOnyx"
+        /** Attain an instance of AtOnyx */
+        @JvmStatic
+        fun attain(): AtOnyx {
+            return AtOnyxImpl()
+        }
     }
 
-    @JvmField
-    var STROKE_WIDTH = 3.0f
+    fun setStroke(stroke: StrokeStyle)
+    fun addExclusion(rect: Rect)
 
-    @JvmField
-    var INTERVAL = 10
+    fun eraseEverything()
 
-    var countRec = 0; private set
+    fun enablePen()
+
+    fun doCreate(surfaceView: SurfaceView)
+    fun doResume()
+    fun doPause()
+    fun doStop()
+    fun doDestroy()
+
+    fun draw(stroke: StrokeStyle, touchPointList: TouchPointList)
+
+}
+
+open class AtOnyxImpl : AtOnyx {
+
+    private var strokeStyle = StrokeStyle.FOUNTAIN
+    private var strokeWidth = 4.0f
+    private var countRec = 0
 
     private var _surfaceview: SurfaceView? = null
     protected val surfaceview: SurfaceView get() = _surfaceview!! // non-null or fail as it is required in onCreate()
@@ -43,41 +60,40 @@ open class AtOnyx() {
     private var bitmap: Bitmap? = null
     private var canvas: Canvas? = null
 
-    private var touchHelper: TouchHelper? = null
-    private var startPoint: TouchPoint? = null
+    private var _touchHelper: TouchHelper? = null
+    private val touchHelper: TouchHelper
+        get() = _touchHelper ?: TouchHelper.create(surfaceview, callback).also { _touchHelper = it }
 
+    private var startPoint: TouchPoint? = null
     private var rxManager: RxManager? = null
 
-    val paint = Paint()
-
-    private var stroke = Stroke.FOUNTAIN
-
-    val exclusion = mutableListOf<Rect>()
+    private val exclusion = mutableListOf<Rect>()
+    private val paint = Paint()
 
     private var deviceReceiver: GlobalDeviceReceiver? = GlobalDeviceReceiver()
 
-    fun setStroke(stroke: Stroke) {
-        this.stroke = stroke
-        touchHelper?.setStrokeStyle(stroke.style)
+    override fun setStroke(stroke: StrokeStyle) {
+        this.strokeStyle = stroke
+        touchHelper.setStrokeStyle(stroke.style)
     }
 
-    fun addExclusion(rect: Rect) {
+    override fun addExclusion(rect: Rect) {
         exclusion.add(rect)
     }
 
-    open fun getRxManager(): RxManager? {
+    private fun getRxManager(): RxManager? {
         if (rxManager == null) {
             rxManager = RxManager.Builder.sharedSingleThreadManager()
         }
         return rxManager
     }
 
-    open fun renderToScreen(surfaceView: SurfaceView?, bitmap: Bitmap?) {
+    private fun renderToScreen(surfaceView: SurfaceView?, bitmap: Bitmap?) {
         getRxManager()!!.enqueue(RendererToScreenRequest(surfaceView, bitmap), null)
     }
 
-    fun attainBitmap(): Bitmap = this.bitmap ?: newBitmap().also { this.bitmap = it }
-    fun attainCanvas(): Canvas =
+    private fun attainBitmap(): Bitmap = this.bitmap ?: newBitmap().also { this.bitmap = it }
+    private fun attainCanvas(): Canvas =
         (this.canvas ?: newCanvas(attainBitmap())).also { it.setBitmap(attainBitmap()) }
 
     protected open fun newBitmap(): Bitmap = Bitmap.createBitmap(
@@ -92,10 +108,10 @@ open class AtOnyx() {
         paint.isAntiAlias = true
         paint.style = Paint.Style.STROKE
         paint.color = Color.BLACK
-        paint.strokeWidth = STROKE_WIDTH
+        paint.strokeWidth = strokeWidth
     }
 
-    fun initReceiver() {
+    private fun initReceiver() {
         deviceReceiver?.setSystemNotificationPanelChangeListener { open ->
             setRawDrawing(!open)
             renderToScreen(surfaceview, attainBitmap())
@@ -114,142 +130,66 @@ open class AtOnyx() {
         return true
     }
 
-    fun clearSurface() {
+    public fun clearSurface() {
         recycleBitmap()
     }
 
-    fun recycleBitmap() {
+    private fun recycleBitmap() {
+        Log.d("AtOnyx.recycleBitmap")
         bitmap?.recycle()
         bitmap = null
     }
 
-    fun eraseEverything() {
+    override fun eraseEverything() {
+        Log.d("AtOnyx.eraseEverything")
         setRawDrawing(false)
         recycleBitmap()
         cleanSurfaceView()
     }
 
-    fun enablePen() {
+    override fun enablePen() {
+        Log.d("AtOnyx.enablePen")
         setRawDrawing(true)
         recycleBitmap()
     }
 
-    fun setRawDrawing(enabled: Boolean) {
-        touchHelper?.setRawDrawingEnabled(enabled)
+    private fun setRawDrawing(enabled: Boolean) {
+        Log.d("AtOnyx.setRawDrawing( $enabled )")
+        touchHelper.setRawDrawingEnabled(enabled)
+    }
+
+    override fun doResume() {
+        Log.d("AtOnyx.doResume")
+        setRawDrawing(true)
+    }
+
+    override fun doPause() {
+        Log.d("AtOnyx.doPause")
+        setRawDrawing(false)
+    }
+
+    override fun doStop() {
+        Log.d("AtOnyx.doStop")
+        setRawDrawing(false)
     }
 
     /**
      * Must be called before use.
      * @see [doDestroy]
      */
-    fun doCreate(surfaceView: SurfaceView) {
+    override fun doCreate(surfaceView: SurfaceView) {
+        Log.d("AtOnyx.doCreate() - Start")
         this._surfaceview = surfaceView
-        touchHelper = TouchHelper.create(surfaceView, callback)
-
+        // touchHelper = TouchHelper.create(surfaceView, callback)
         initPaint()
-
-        setRawDrawing(true)
-
-        onCreate(surfaceView)
-
         initSurface()
-
         initReceiver()
+        setRawDrawing(true)
+        onCreate(surfaceView)
+        Log.d("AtOnyx.doCreate() - Finish")
     }
 
-    protected fun getContext(): Context {
-        return surfaceview.context
-    }
-
-    /**
-     * Called when this [AtOnyx] is being created.
-     * Guaranteed before use.
-     * Perform initialization here.
-     */
-    protected open fun onCreate(surfaceView: SurfaceView) {}
-
-    /**
-     * Call when no longer in use.
-     * @see [doCreate]
-     */
-    fun doDestroy() = onDestroy()
-
-    /**
-     * Called when this [AtOnyx] is no longer needed.
-     * Not guaranteed such as when the app is force-closed or crashes.
-     * Perform cleanup here.
-     */
-    protected open fun onDestroy() {
-        touchHelper?.closeRawDrawing()
-        _surfaceview = null
-        recycleBitmap()
-        canvas = null
-        touchHelper = null
-        deviceReceiver?.enable(getContext(), false)
-        deviceReceiver = null
-    }
-
-
-    private val callback: RawInputCallback = object : RawInputCallback() {
-        override fun onBeginRawDrawing(b: Boolean, touchPoint: TouchPoint) {
-            Log.d(TAG, "onBeginRawDrawing")
-            startPoint = touchPoint
-            Log.d(
-                TAG,
-                touchPoint.getX().toString() + ", " + touchPoint.getY()
-            )
-            countRec = 0
-            // com.ath.onyx.TouchUtils.disableFingerTouch(getApplicationContext())
-        }
-
-        override fun onEndRawDrawing(b: Boolean, touchPoint: TouchPoint) {
-            Log.d(TAG, "onEndRawDrawing###")
-//            if (!binding.cbRender.isChecked()) {
-//                drawRect(touchPoint)
-//            }
-            Log.d(
-                TAG,
-                touchPoint.getX().toString() + ", " + touchPoint.getY()
-            )
-            TouchUtils.enableFingerTouch(surfaceview.context)
-        }
-
-        override fun onRawDrawingTouchPointMoveReceived(touchPoint: TouchPoint) {
-            Log.d(TAG, "onRawDrawingTouchPointMoveReceived")
-            Log.d(
-                TAG,
-                touchPoint.getX().toString() + ", " + touchPoint.getY()
-            )
-            countRec++
-            countRec %= INTERVAL
-            Log.d(TAG, "countRec = $countRec")
-        }
-
-        override fun onRawDrawingTouchPointListReceived(touchPointList: TouchPointList) {
-            Log.d(TAG, "onRawDrawingTouchPointListReceived")
-            // drawScribbleToBitmap(touchPointList)
-            draw(stroke, touchPointList)
-        }
-
-        override fun onBeginRawErasing(b: Boolean, touchPoint: TouchPoint) {
-            Log.d(TAG, "onBeginRawErasing")
-        }
-
-        override fun onEndRawErasing(b: Boolean, touchPoint: TouchPoint) {
-            Log.d(TAG, "onEndRawErasing")
-        }
-
-        override fun onRawErasingTouchPointMoveReceived(touchPoint: TouchPoint) {
-            Log.d(TAG, "onRawErasingTouchPointMoveReceived")
-        }
-
-        override fun onRawErasingTouchPointListReceived(touchPointList: TouchPointList) {
-            Log.d(TAG, "onRawErasingTouchPointListReceived")
-        }
-    }
-
-    fun initSurface() {
-
+    private fun initSurface() {
         surfaceview.addOnLayoutChangeListener(object : OnLayoutChangeListener {
             override fun onLayoutChange(
                 v: View,
@@ -267,21 +207,18 @@ open class AtOnyx() {
                 }
                 val limit = Rect()
                 surfaceview.getLocalVisibleRect(limit)
-                touchHelper?.setStrokeWidth(STROKE_WIDTH)
+                touchHelper.setStrokeWidth(strokeWidth)
                     ?.setLimitRect(limit, exclusion)
                     ?.openRawDrawing()
-                touchHelper?.setStrokeStyle(stroke.style)
+                touchHelper.setStrokeStyle(strokeStyle.style)
                 surfaceview.addOnLayoutChangeListener(this)
             }
         })
 
-        surfaceview.setOnTouchListener(OnTouchListener { v, event ->
-            Log.d(
-                TAG,
-                "surfaceView.setOnTouchListener - onTouch::action - " + event.action
-            )
+        surfaceview.setOnTouchListener { _, event ->
+            Log.d("surfaceView.setOnTouchListener - onTouch::action - " + event.action)
             true
-        })
+        }
 
         val surfaceCallback: SurfaceHolder.Callback = object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
@@ -303,15 +240,93 @@ open class AtOnyx() {
         surfaceview.holder.addCallback(surfaceCallback)
     }
 
-    fun draw(stroke: Stroke, touchPointList: TouchPointList) {
-        when (stroke) {
-            Stroke.PENCIL -> drawPencil(touchPointList)
-            Stroke.FOUNTAIN -> drawFountain(touchPointList)
-            else -> TODO()
+    protected open fun getContext(): Context {
+        return surfaceview.context
+    }
+
+    /**
+     * Called when this [AtOnyx] is being created.
+     * Guaranteed before use.
+     * Perform initialization here.
+     */
+    protected open fun onCreate(surfaceView: SurfaceView) {}
+
+    /**
+     * Call when no longer in use.
+     * @see [doCreate]
+     */
+    override fun doDestroy() = onDestroy()
+
+    /**
+     * Called when this [AtOnyx] is no longer needed.
+     * Not guaranteed such as when the app is force-closed or crashes.
+     * Perform cleanup here.
+     */
+    protected open fun onDestroy() {
+        touchHelper.closeRawDrawing()
+        _surfaceview = null
+        recycleBitmap()
+        canvas = null
+        _touchHelper = null
+        deviceReceiver?.enable(getContext(), false)
+        deviceReceiver = null
+    }
+
+
+    private val callback: RawInputCallback = object : RawInputCallback() {
+        override fun onBeginRawDrawing(b: Boolean, touchPoint: TouchPoint) {
+            Log.d("onBeginRawDrawing")
+            startPoint = touchPoint
+            Log.d(touchPoint.getX().toString() + ", " + touchPoint.getY())
+            countRec = 0
+            disableFingerTouch(getContext())
+        }
+
+        override fun onEndRawDrawing(b: Boolean, touchPoint: TouchPoint) {
+            Log.d("onEndRawDrawing###")
+            Log.d(touchPoint.getX().toString() + ", " + touchPoint.getY())
+            TouchUtils.enableFingerTouch(surfaceview.context)
+        }
+
+        override fun onRawDrawingTouchPointMoveReceived(touchPoint: TouchPoint) {
+            Log.d("onRawDrawingTouchPointMoveReceived")
+            Log.d(touchPoint.getX().toString() + ", " + touchPoint.getY())
+            countRec++
+            Log.d("countRec = $countRec")
+        }
+
+        override fun onRawDrawingTouchPointListReceived(touchPointList: TouchPointList) {
+            Log.d("onRawDrawingTouchPointListReceived")
+            draw(strokeStyle, touchPointList)
+        }
+
+        override fun onBeginRawErasing(b: Boolean, touchPoint: TouchPoint) {
+            Log.d("onBeginRawErasing")
+        }
+
+        override fun onEndRawErasing(b: Boolean, touchPoint: TouchPoint) {
+            Log.d("onEndRawErasing")
+        }
+
+        override fun onRawErasingTouchPointMoveReceived(touchPoint: TouchPoint) {
+            Log.d("onRawErasingTouchPointMoveReceived")
+        }
+
+        override fun onRawErasingTouchPointListReceived(touchPointList: TouchPointList) {
+            Log.d("onRawErasingTouchPointListReceived")
         }
     }
 
-    fun drawPencil(touchPointList: TouchPointList) {
+
+    override fun draw(stroke: StrokeStyle, touchPointList: TouchPointList) {
+        when (stroke) {
+            StrokeStyle.PENCIL -> drawPencil(touchPointList)
+            StrokeStyle.FOUNTAIN -> drawFountain(touchPointList)
+            else -> drawFountain(touchPointList)
+        }
+    }
+
+    protected open fun drawPencil(touchPointList: TouchPointList) {
         val canvas = attainCanvas()
         val list = touchPointList.points
         val path = Path()
@@ -325,7 +340,7 @@ open class AtOnyx() {
         canvas.drawPath(path, paint)
     }
 
-    fun drawFountain(touchPointList: TouchPointList) {
+    protected open fun drawFountain(touchPointList: TouchPointList) {
         val canvas = attainCanvas()
         val maxPressure = EpdController.getMaxTouchPressure()
         NeoFountainPen.drawStroke(
@@ -333,7 +348,7 @@ open class AtOnyx() {
             paint,
             touchPointList.points,
             NumberUtils.FLOAT_ONE,
-            STROKE_WIDTH,
+            strokeWidth,
             maxPressure,
             false
         )

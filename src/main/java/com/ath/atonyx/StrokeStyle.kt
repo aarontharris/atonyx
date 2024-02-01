@@ -11,7 +11,7 @@ import com.onyx.android.sdk.pen.TouchHelper
  * - typesafety (vs Int)
  * - futureproofing against onyx api changes
  */
-enum class Stroke(val style: Int) {
+enum class StrokeStyle(val style: Int) {
     PENCIL(TouchHelper.STROKE_STYLE_PENCIL),
     FOUNTAIN(TouchHelper.STROKE_STYLE_FOUNTAIN),
     MARKER(TouchHelper.STROKE_STYLE_MARKER),
