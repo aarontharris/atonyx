@@ -122,11 +122,12 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
     private var _surfaceview: SurfaceView? = null
     protected val surfaceview: SurfaceView get() = _surfaceview!! // non-null or fail as it is required in onCreate()
 
+    // bitmap & canvas are tied.
+    // canvas is backed by bitmap
     private var _bitmap: Bitmap? = null
     private val bitmap get() = this._bitmap ?: newBitmap().also { this._bitmap = it }
     private var _canvas: Canvas? = null
     private val canvas get() = (this._canvas ?: newCanvas(bitmap)).also { it.setBitmap(bitmap) }
-
 
     private var _touchHelper: TouchHelper? = null
     private val touchHelper: TouchHelper
@@ -174,10 +175,10 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
         deviceReceiver?.setSystemNotificationPanelChangeListener { open ->
             Log.d("AtOnyx.SystemNotificationPanelChangeListener")
             setRawDrawing(!open)
-            renderToScreen(surfaceview, bitmap)
+            queueRenderBitmapToScreen(surfaceview, bitmap)
         }?.setSystemScreenOnListener {
             Log.d("AtOnyx.SystemScreenOnListener")
-            renderToScreen(surfaceview, bitmap)
+            queueRenderBitmapToScreen(surfaceview, bitmap)
         }
         deviceReceiver?.enable(getContext(), true)
     }
@@ -243,8 +244,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
     private fun getRxManager(): RxManager =
         _rxManager ?: RxManager.Builder.sharedSingleThreadManager().also { _rxManager = it }
 
-    private fun renderToScreen(surfaceView: SurfaceView?, bitmap: Bitmap?) {
-        Log.d("AtOnyx.renderToScreen")
+    private fun queueRenderBitmapToScreen(surfaceView: SurfaceView, bitmap: Bitmap?) {
         getRxManager().enqueue(RendererToScreenRequest(surfaceView, bitmap), null)
     }
 
@@ -271,7 +271,26 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
         _bitmap = null
     }
 
+
     override fun refreshAll() {
+        Log.d("AtOnyx.refreshAll")
+        setRawDrawing(false)
+
+        // clear it immediately
+        recycleBitmap()
+
+        // copy penStrokes to bitmap
+        val copy = ArrayList(penStrokesOrdered)
+        for (stroke in copy) {
+            draw(canvas, stroke) // to bitmap // canvas is backed by bitmap
+        }
+
+        // queue bitmap to screen
+        queueRenderBitmapToScreen(surfaceview, bitmap)
+        setRawDrawing(true)
+    }
+
+    fun xrefreshAll() {
         Log.d("AtOnyx.refreshAll")
         if (surfaceview.holder == null) {
             Log.e("AtOnyx.refreshAll -- Unable to obtain surfaceview.holder")
@@ -310,6 +329,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
             // We should be writing everything to penStrokesOrdered & bitmap
             // then bitmap to screenCanvas ?
         }
+        drawBitmapToSurface(bitmap)
 
         surfaceview.holder.unlockCanvasAndPost(surfaceCanvas)
         setRawDrawing(true)
