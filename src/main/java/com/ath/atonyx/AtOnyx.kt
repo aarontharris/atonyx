@@ -16,6 +16,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.annotation.ColorInt
 import androidx.annotation.RequiresApi
+import com.ath.atonyx.LC.*
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
 import com.onyx.android.sdk.pen.NeoFountainPen
@@ -43,10 +44,23 @@ interface AtOnyx {
     /** Areas that will not receive pen drawing input (but still receive clicks) */
     fun addExclusion(rect: Rect)
 
+    /** Applies to Drawing Surface Only */
+    fun inputMode(pen: Boolean, touch: Boolean) {
+        if (pen) enablePen() else disablePen()
+        if (touch) enableFinger() else disableFinger()
+    }
+
+    /** Applies to Drawing Surface Only */
     fun enablePen()
+
+    /** Applies to Drawing Surface Only */
     fun disablePen()
-    fun enableTouch()
-    fun disableTouch()
+
+    /** Applies to Drawing Surface Only */
+    fun enableFinger()
+
+    /** Applies to Drawing Surface Only */
+    fun disableFinger()
 
     fun draw(touchPointList: TouchPointList)
 
@@ -65,7 +79,7 @@ interface AtOnyx {
     /** Erase everything using the provided color instead of the [setBackgroundColor] */
     fun eraseEverything(@ColorInt color: Int = Color.WHITE)
 
-    /** Defaults to [Color.WHITE] */
+    /** Defaults to [Color.WHITE] -- used when clearing the surface */
     fun setBackgroundColor(@ColorInt color: Int)
 }
 
@@ -115,9 +129,10 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
 
     private val attr = StrokeAttr()
     @ColorInt private var backColor: Int = Color.WHITE
+    private var lifecycle: LC = ON_DESTROY
 
-    private var inResume = false
-    private var isSurfaceValid = false
+    private val isSurfaceValid: Boolean
+        get() = _surfaceview?.let { it.width > 0 && it.height > 0 } ?: false
 
     private var _surfaceview: SurfaceView? = null
     protected val surfaceview: SurfaceView get() = _surfaceview!! // non-null or fail as it is required in onCreate()
@@ -144,14 +159,14 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
 
     private fun inputListener(): RawInputCallback = object : RawInputCallbackSimple() {
         override fun onEndRawDrawing(outLimitRegion: Boolean, point: TouchPoint) {
-            enableTouch()
+            enableFinger()
             currentPenStroke = null
         }
 
         override fun onBeginRawDrawing(shortcutDrawing: Boolean, point: TouchPoint) {
             currentPenStroke =
                 PenStrokeImpl(StrokeAttr(attr)).also { penStrokesOrdered.add(it) }
-            disableTouch()
+            disableFinger()
         }
 
         override fun onRawDrawingTouchPointListReceived(points: TouchPointList) {
@@ -169,6 +184,18 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
         touchHelper.setStrokeStyle(attr.style.style)
         touchHelper.setStrokeWidth(attr.width)
         touchHelper.setStrokeColor(attr.color)
+
+        when (attr.mode) {
+            PenMode.PEN -> {
+                touchHelper.setBrushRawDrawingEnabled(true)
+                touchHelper.setEraserRawDrawingEnabled(false)
+            }
+
+            PenMode.ERASE_STROKE -> {
+                touchHelper.setBrushRawDrawingEnabled(false)
+                touchHelper.setEraserRawDrawingEnabled(true)
+            }
+        }
     }
 
     private fun initReceiver() {
@@ -183,7 +210,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
         deviceReceiver?.enable(getContext(), true)
     }
 
-    private fun initSurface() {
+    private fun startup() {
         @Suppress("UNUSED_ANONYMOUS_PARAMETER")
         surfaceview.addOnLayoutChangeListener { v, l, t, r, b, oldL, oldT, oldR, oldB ->
             Log.d("AtOnyx.onLayoutChange -- surfaceview.wh=${surfaceview.width}/${surfaceview.height}")
@@ -192,10 +219,8 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
             surfaceview.getLocalVisibleRect(limit)
             touchHelper.setLimitRect(limit, exclusionList)
             if (!touchHelper.isRawDrawingCreated)
-                touchHelper.openRawDrawing()
-            initStyle()
-            isSurfaceValid = true
-            checkResumeAndLayoutComplete()
+                openRawDrawing()
+            notifyLayoutChange()
         }
 
         // surfaceview.setOnTouchListener { _, event ->
@@ -307,25 +332,36 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
     }
 
     override fun enablePen() {
-        Log.d("AtOnyx.enablePen")
-        setRawDrawing(true)
+        drawingEnabled(true)
+        // setRawDrawing(true)
     }
 
-    // TODO untested
     override fun disablePen() {
-        setRawDrawing(false)
+        drawingEnabled(false)
+        // setRawDrawing(false)
     }
 
     // TODO untested
-    override fun enableTouch() {
+    override fun enableFinger() {
         TouchUtils.enableFingerTouch(getContext())
         touchHelper.enableFingerTouch(true)
     }
 
     // TODO untested
-    override fun disableTouch() {
+    override fun disableFinger() {
         TouchUtils.disableFingerTouch(getContext())
         touchHelper.enableFingerTouch(false)
+    }
+
+    /**
+     * Paused due to interruption such as
+     */
+    private fun systemPaused(paused: Boolean) {
+
+    }
+
+    private fun systemResume() {
+
     }
 
     // TODO untested
@@ -334,30 +370,27 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
         touchHelper.setRawDrawingEnabled(enabled)
     }
 
+    private fun openRawDrawing() {
+        touchHelper.openRawDrawing()
+    }
+
+    private fun closeRawDrawing() {
+        touchHelper.closeRawDrawing()
+    }
+
+    private fun renderDuringScribble(enabled: Boolean) {
+        touchHelper.setRawDrawingRenderEnabled(enabled)
+    }
+
+    private fun drawingEnabled(enabled: Boolean) {
+        touchHelper.setRawDrawingEnabled(enabled)
+    }
+
     private fun uiRefresh() {
         setRawDrawing(false)
         setRawDrawing(true)
     }
 
-    /**
-     * Must be called before use.
-     * @see [doDestroy]
-     */
-    override fun doCreate(surfaceView: SurfaceView) {
-        this._surfaceview = surfaceView
-        initReceiver()
-        initStyle()
-        initSurface()
-        setRawDrawing(true)
-        onCreate(surfaceView)
-    }
-
-    /**
-     * Called when this [AtOnyx] is being created.
-     * Guaranteed before use.
-     * Perform initialization here.
-     */
-    protected open fun onCreate(surfaceView: SurfaceView) {}
 
     override fun doSaveInstanceState(bundle: Bundle) {
         onSaveInstanceState(bundle)
@@ -365,57 +398,52 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
 
     protected open fun onSaveInstanceState(bundle: Bundle) {}
 
-    override fun doStart() {
-        onStart()
-    }
-
-    protected open fun onStart() {}
-
-    override fun doResume() {
-        Log.d("AtOnyx.doResume")
-        setRawDrawing(true)
-        inResume = true
-        onResume()
-        checkResumeAndLayoutComplete()
-    }
-
-    protected open fun onResume() {}
-
-    private fun checkResumeAndLayoutComplete() {
-        if (inResume && isSurfaceValid) doResumeAndLayoutComplete()
-    }
-
-    private fun doResumeAndLayoutComplete() {
-        enablePen()
-        onResumeAndLayoutComplete()
-    }
-
-    /** Called when in "resume" and onLayout has completed -- aka surface is rendered */
-    protected open fun onResumeAndLayoutComplete() {}
-
-    override fun doPause() {
-        Log.d("AtOnyx.doPause")
-        setRawDrawing(false)
-        inResume = false
-        onPause()
-    }
-
-    protected open fun onPause() {}
-
-    override fun doStop() {
-        Log.d("AtOnyx.doStop")
-        setRawDrawing(false)
-        onStop()
-    }
-
-    protected open fun onStop() {}
-
     /**
-     * Call when no longer in use.
-     * @see [doCreate]
+     * Must be called before use.
+     * @see [doDestroy]
      */
-    override fun doDestroy() {
-        touchHelper.closeRawDrawing()
+    override fun doCreate(surfaceView: SurfaceView) {
+        this._surfaceview = surfaceView
+        notifyLifecycleChange(ON_CREATE)
+    }
+
+    override fun doStart() = notifyLifecycleChange(ON_START)
+    override fun doResume() = notifyLifecycleChange(ON_RESUME)
+    override fun doPause() = notifyLifecycleChange(ON_PAUSE)
+    override fun doStop() = notifyLifecycleChange(ON_STOP)
+    override fun doDestroy() = notifyLifecycleChange(ON_DESTROY)
+
+    private fun notifyLifecycleChange(event: LC) {
+        Log.d("AtOnyx.Lifecycle: $event")
+        lifecycle = event
+        when (event) {
+            ON_CREATE -> startup()
+            ON_START -> {}
+            ON_RESUME -> checkValidSurface()
+            ON_PAUSE -> {}
+            ON_STOP -> {}
+            ON_DESTROY -> shutdown()
+        }
+    }
+
+    private fun notifyLayoutChange() {
+        checkValidSurface()
+    }
+
+    private fun checkValidSurface() {
+        if (lifecycle == ON_RESUME && isSurfaceValid) {
+            onValidSurface()
+        }
+    }
+
+    private fun onValidSurface() {
+        initStyle()
+        initReceiver()
+        enablePen()
+    }
+
+    fun shutdown() {
+        closeRawDrawing()
         _surfaceview = null
         recycleBitmap()
         _canvas = null
@@ -424,15 +452,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
         deviceReceiver = null
         _rxManager?.shutdown()
         _rxManager = null
-        onDestroy()
     }
-
-    /**
-     * Called when this [AtOnyx] is no longer needed.
-     * Not guaranteed such as when the app is force-closed or crashes.
-     * Perform cleanup here.
-     */
-    protected open fun onDestroy() {}
 
     protected open fun getContext(): Context {
         return surfaceview.context
