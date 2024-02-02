@@ -223,6 +223,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
     }
 
     override fun setStyle(style: StrokeStyle) {
+        Log.d("AtOnyx.setStyle $style")
         this.attr.style = style
         initStyle()
     }
@@ -287,51 +288,6 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
 
         // queue bitmap to screen
         queueRenderBitmapToScreen(surfaceview, bitmap)
-        setRawDrawing(true)
-    }
-
-    fun xrefreshAll() {
-        Log.d("AtOnyx.refreshAll")
-        if (surfaceview.holder == null) {
-            Log.e("AtOnyx.refreshAll -- Unable to obtain surfaceview.holder")
-            return
-        }
-
-        setRawDrawing(false)
-
-        val surfaceCanvas: Canvas = surfaceview.holder.lockCanvas().also {
-            if (it == null) Log.e("AtOnyx.refreshAll -- Unable to obtain surfaceview.lockCanvas")
-        } ?: return
-
-        surfaceCanvas.drawColor(Color.WHITE) // overwrite the whole surfaceCanvas with WHITE
-
-        val copy = ArrayList(penStrokesOrdered)
-        penStrokesOrdered.clear()
-
-        for (stroke in copy) {
-            draw(surfaceCanvas, stroke)
-            penStrokesOrdered.add(stroke)
-
-            // TODO: BUG
-            // I have a bug where
-            // draw "A" on the surface
-            // Clear All
-            // Restore
-            // Draw "B" on the surface
-            // turn off the screen
-            // turn on the screen
-            // notice only B is visible.
-            // this is because
-            // - A was in the penStrokesOrdered & surfaceCanvas
-            // - B was in the bitmap & surfaceCanvas
-            //   Only bitmap is restored when the screen wakes up
-            // FIX
-            // We should be writing everything to penStrokesOrdered & bitmap
-            // then bitmap to screenCanvas ?
-        }
-        drawBitmapToSurface(bitmap)
-
-        surfaceview.holder.unlockCanvasAndPost(surfaceCanvas)
         setRawDrawing(true)
     }
 
