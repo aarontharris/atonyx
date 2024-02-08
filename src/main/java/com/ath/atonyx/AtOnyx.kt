@@ -1,7 +1,5 @@
 package com.ath.atonyx
 
-import android.app.Activity
-import android.app.Application.ActivityLifecycleCallbacks
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -10,12 +8,10 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.Rect
-import android.os.Build
 import android.os.Bundle
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.annotation.ColorInt
-import androidx.annotation.RequiresApi
 import com.ath.atonyx.LC.*
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
@@ -84,33 +80,13 @@ interface AtOnyx {
 }
 
 interface AtOnyxInit {
-    fun doCreate(surfaceView: SurfaceView)
+    fun doCreate(surfaceView: SurfaceView, bundle: Bundle?)
     fun doSaveInstanceState(bundle: Bundle)
     fun doStart()
     fun doResume()
     fun doPause()
     fun doStop()
     fun doDestroy()
-
-    /**
-     * NOT YET IMPLEMENTED
-     * Optional Convenience for SDK29+ users.
-     * This allows you to omit lifecycle calls to: [doCreate], [doResume], etc
-     */
-    @RequiresApi(Build.VERSION_CODES.Q)
-    private fun doCreate29(context: Activity, surface: SurfaceView) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            context.registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
-                override fun onActivityCreated(p0: Activity, p1: Bundle?) {}
-                override fun onActivityStarted(p0: Activity) {}
-                override fun onActivityResumed(p0: Activity) {}
-                override fun onActivityPaused(p0: Activity) {}
-                override fun onActivityStopped(p0: Activity) {}
-                override fun onActivitySaveInstanceState(p0: Activity, p1: Bundle) {}
-                override fun onActivityDestroyed(p0: Activity) {}
-            })
-        }
-    }
 }
 
 interface AtOnyxStyle {
@@ -173,6 +149,45 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
             currentPenStroke?.add(points)
             draw(points)
         }
+    }
+
+    /**
+     * Must be called before use.
+     * @see [doDestroy]
+     */
+    override fun doCreate(surfaceView: SurfaceView, bundle: Bundle?) {
+        this._surfaceview = surfaceView
+        notifyLifecycleChange(ON_CREATE)
+    }
+
+    override fun doStart() = notifyLifecycleChange(ON_START)
+    override fun doResume() = notifyLifecycleChange(ON_RESUME)
+    override fun doPause() = notifyLifecycleChange(ON_PAUSE)
+    override fun doStop() = notifyLifecycleChange(ON_STOP)
+    override fun doDestroy() = notifyLifecycleChange(ON_DESTROY)
+
+    override fun doSaveInstanceState(bundle: Bundle) {
+        Log.d("AtOnyx.Lifecycle: ON_SAVE")
+        onSaveInstanceState(bundle)
+    }
+
+    protected open fun onSaveInstanceState(bundle: Bundle) {}
+
+    private fun notifyLifecycleChange(event: LC) {
+        Log.d("AtOnyx.Lifecycle: $event")
+        lifecycle = event
+        when (event) {
+            ON_CREATE -> startup()
+            ON_START -> {}
+            ON_RESUME -> checkValidSurface()
+            ON_PAUSE -> {}
+            ON_STOP -> {}
+            ON_DESTROY -> shutdown()
+        }
+    }
+
+    private fun notifyLayoutChange() {
+        checkValidSurface()
     }
 
     private fun initStyle() {
@@ -392,44 +407,6 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
     }
 
 
-    override fun doSaveInstanceState(bundle: Bundle) {
-        onSaveInstanceState(bundle)
-    }
-
-    protected open fun onSaveInstanceState(bundle: Bundle) {}
-
-    /**
-     * Must be called before use.
-     * @see [doDestroy]
-     */
-    override fun doCreate(surfaceView: SurfaceView) {
-        this._surfaceview = surfaceView
-        notifyLifecycleChange(ON_CREATE)
-    }
-
-    override fun doStart() = notifyLifecycleChange(ON_START)
-    override fun doResume() = notifyLifecycleChange(ON_RESUME)
-    override fun doPause() = notifyLifecycleChange(ON_PAUSE)
-    override fun doStop() = notifyLifecycleChange(ON_STOP)
-    override fun doDestroy() = notifyLifecycleChange(ON_DESTROY)
-
-    private fun notifyLifecycleChange(event: LC) {
-        Log.d("AtOnyx.Lifecycle: $event")
-        lifecycle = event
-        when (event) {
-            ON_CREATE -> startup()
-            ON_START -> {}
-            ON_RESUME -> checkValidSurface()
-            ON_PAUSE -> {}
-            ON_STOP -> {}
-            ON_DESTROY -> shutdown()
-        }
-    }
-
-    private fun notifyLayoutChange() {
-        checkValidSurface()
-    }
-
     private fun checkValidSurface() {
         if (lifecycle == ON_RESUME && isSurfaceValid) {
             onValidSurface()
@@ -444,7 +421,6 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
 
     fun shutdown() {
         closeRawDrawing()
-        _surfaceview = null
         recycleBitmap()
         _canvas = null
         _touchHelper = null
@@ -452,6 +428,7 @@ open class AtOnyxImpl : AtOnyx, AtOnyxStyle, AtOnyxInit {
         deviceReceiver = null
         _rxManager?.shutdown()
         _rxManager = null
+        _surfaceview = null
     }
 
     protected open fun getContext(): Context {
